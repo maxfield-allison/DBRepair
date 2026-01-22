@@ -29,15 +29,15 @@ If sufficient privleges exist (root), and supported by the environment, the opti
 
  The following commands (or their number), listed in alphabetical order,  are accepted as input.
 ```
-   AUTO(matic)  - Automatically check, repair/optimize, and reindex the databases in one step.
-   CHEC(k)      - Check the main and blob databases integrity
+   AUTO(matic)  - Automatically check, repair/optimize, reindex, and FTS rebuild in one step.
+   CHEC(k)      - Check the main and blob databases integrity (includes FTS index check)
    DEFL(ate)    - Deflate a bloated PMS database (faulty statistics data)
    EXIT         - Exit the utility
    IGNOre/HONOr - Ignore/Honor constraint errors when IMPORTing additional data into DB.
    IMPO(rt)     - Import viewstate / watch history from another database
    PRUN(e)      - Prune (remove) old image files from transcoder cache diretory
    PURG(e)      - Purge (delete) all temporary files left behind by PMS & the transcoder from the temp directory
-   REIN(dex)    - Rebuild the database indexes
+   REIN(dex)    - Rebuild the database indexes (includes FTS indexes)
    REPL(ace)    - Replace the existing databases with a PMS-generated backup
    SHOW         - Show the log file
    STAR(t)      - Start PMS (not available on all platforms)
@@ -58,8 +58,8 @@ If sufficient privleges exist (root), and supported by the environment, the opti
   Select
 
   1 - 'stop'      - Stop PMS.
-  2 - 'automatic' - Check, Repair/Optimize, and Reindex Database in one step.
-  3 - 'check'     - Perform integrity check of database.
+  2 - 'automatic' - Check, Repair/Optimize, Reindex, and FTS rebuild in one step.
+  3 - 'check'     - Perform integrity check of database and FTS indexes.
   4 - 'vacuum'    - Remove empty space from database without optimizing.
   5 - 'repair'    - Repair/Optimize databases.
   6 - 'reindex'   - Rebuild database indexes.
@@ -105,7 +105,7 @@ Enter command # -or- command name (4 char min) :
  # Installation
 
 ### Downloading
-    Download DBRepair.sh (if you want just the script) 
+    Download DBRepair.sh (if you want just the script)
     # This overwrites any existing version.  Remove "-O DBRepair.sh" to not overwrite.
 ```
     wget -O DBRepair.sh https://github.com/ChuckPa/PlexDBRepair/releases/latest/download/DBRepair.sh
@@ -147,10 +147,10 @@ Enter command # -or- command name (4 char min) :
         1. Accessing a NAS
             Open a terminal/command line window on your computer.
             type: ssh admin-username@IP.addr.of.NAS
-        
-        2. Linux 
+
+        2. Linux
             Open a terminal session and elevate to the root (sudo) user
-            
+
         3. Windows  -- for Windows PMS hosts
             Open a Command window
             Follow the instructions for the Windows version of DBRepair
@@ -264,6 +264,17 @@ These examples
     This is rarely needed.  The only time you might want/need to backup one step is if Replace leaves you worse off
     than you were before. In this case, UNDO then Repair.  Undo can only undo the single most-recent action.
     (Note: In a future release, you will be able to 'undo' every action taken until the DBs are in their original state)
+
+  G. HTTP 500 errors when adding to collections / FTS index corruption
+    This occurs when standard integrity_check passes but FTS (Full-Text Search) indexes are corrupted.
+    Symptoms: Adding items to collections fails, updating metadata fails, "database disk image is malformed"
+    during UPDATE operations even though Check reports databases are OK.
+
+    1. (3)  Check   - Will show "FTS index damaged" message
+    2. (6)  Reindex - Rebuild indexes including FTS
+    3. (99) Exit
+
+    Alternatively, use (2) Automatic which will detect and repair FTS issues automatically.
 
 Special considerations:
 
@@ -667,6 +678,13 @@ root@lizum:/sata/plex/Plex Media Server/Plug-in Support/Databases#
 
   Checks the integrity of the Plex main and blobs databases.
 
+  Also performs FTS (Full-Text Search) index integrity checks. FTS indexes can become
+  corrupted even when standard integrity checks pass, causing operations like adding
+  items to collections to fail with "database disk image is malformed" errors.
+
+  If FTS corruption is detected, use 'reindex' (option 6) or 'automatic' (option 2)
+  to rebuild the FTS indexes.
+
 ### Deflate
 
   Repairs a known error in the PMS main database "statistics_bandwidth" table.
@@ -709,6 +727,11 @@ root@lizum:/sata/plex/Plex Media Server/Plug-in Support/Databases#
 
   Rebuilds the database indexes after an import, repair, or replace operation.
   These indexes are used by PMS for searching (both internally and your typed searches)
+
+  Also checks FTS (Full-Text Search) index integrity and rebuilds if corruption is detected.
+  FTS indexes can become corrupted even when standard integrity checks pass, causing
+  "database disk image is malformed" errors during UPDATE operations (e.g., adding items
+  to collections, updating metadata).
 
 ### Repair
 
