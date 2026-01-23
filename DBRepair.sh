@@ -169,19 +169,22 @@ CheckDatabases() {
   return $Damaged
 }
 
-# Global flag for FTS damage status (separate from main DB damage)
-FTSDamaged=0
-
 # Check FTS (Full-Text Search) index integrity
 CheckFTS() {
 
   # Arg1 = calling function name for logging
 
-  FTSDamaged=0
   local Caller="${1:-Check}"
   local FTSFail=0
 
   Output "Checking FTS (Full-Text Search) indexes"
+
+  # Verify main database exists
+  if [ ! -f "$CPPL.db" ]; then
+    Output "ERROR: $CPPL.db does not exist."
+    WriteLog "$Caller - FTS Check - Main DB missing"
+    return 1
+  fi
 
   # Get list of FTS4 virtual tables (exclude shadow tables)
   FTSTables="$("$PLEX_SQLITE" $CPPL.db "$FTS_TABLE_QUERY" 2>&1)"
@@ -209,25 +212,30 @@ CheckFTS() {
     fi
   done
 
-  # Check blobs database FTS tables
-  FTSTablesBlobs="$("$PLEX_SQLITE" $CPPL.blobs.db "$FTS_TABLE_QUERY" 2>&1)"
+  # Check blobs database FTS tables (if database exists)
+  if [ ! -f "$CPPL.blobs.db" ]; then
+    Output "Note: Blobs database not found. Skipping FTS check for blobs."
+    WriteLog "$Caller - FTS Check - No blobs database"
+  else
+    FTSTablesBlobs="$("$PLEX_SQLITE" $CPPL.blobs.db "$FTS_TABLE_QUERY" 2>&1)"
 
-  if [ -n "$FTSTablesBlobs" ]; then
-    for Table in $FTSTablesBlobs
-    do
-      Result="$("$PLEX_SQLITE" $CPPL.blobs.db "INSERT INTO $Table($Table) VALUES('integrity-check');" 2>&1)"
-      ExitCode=$?
+    if [ -n "$FTSTablesBlobs" ]; then
+      for Table in $FTSTablesBlobs
+      do
+        Result="$("$PLEX_SQLITE" $CPPL.blobs.db "INSERT INTO $Table($Table) VALUES('integrity-check');" 2>&1)"
+        ExitCode=$?
 
-      if [ $ExitCode -eq 0 ] && [ -z "$Result" ]; then
-        Output "  FTS index '$Table' (blobs) - OK"
-        WriteLog "$Caller - FTS Check (blobs): $Table - PASS"
-      else
-        Output "  FTS index '$Table' (blobs) - DAMAGED"
-        Output "    Error: $Result"
-        WriteLog "$Caller - FTS Check (blobs): $Table - FAIL ($Result)"
-        FTSFail=1
-      fi
-    done
+        if [ $ExitCode -eq 0 ] && [ -z "$Result" ]; then
+          Output "  FTS index '$Table' (blobs) - OK"
+          WriteLog "$Caller - FTS Check (blobs): $Table - PASS"
+        else
+          Output "  FTS index '$Table' (blobs) - DAMAGED"
+          Output "    Error: $Result"
+          WriteLog "$Caller - FTS Check (blobs): $Table - FAIL ($Result)"
+          FTSFail=1
+        fi
+      done
+    fi
   fi
 
   if [ $FTSFail -eq 0 ]; then
@@ -237,7 +245,6 @@ CheckFTS() {
     Output "FTS integrity check complete. One or more FTS indexes are DAMAGED."
     Output "Use 'reindex' command (option 6) or 'automatic' (option 2) to rebuild."
     WriteLog "$Caller - FTS Check - FAIL"
-    FTSDamaged=1
   fi
 
   return $FTSFail
@@ -1060,6 +1067,15 @@ DoFTSRebuild() {
     # Get list of FTS4 tables (exclude shadow tables)
     Output "Scanning for FTS4 tables in main database..."
 
+    # Verify main database exists
+    if [ ! -f "$CPPL.db" ]; then
+      Output "ERROR: $CPPL.db does not exist."
+      WriteLog "FTSRbld - Main DB missing"
+      Fail=1
+      RestoreSaved "$TimeStamp"
+      return 1
+    fi
+
     FTSTables="$("$PLEX_SQLITE" $CPPL.db "$FTS_TABLE_QUERY" 2>&1)"
     Result=$?
 
@@ -1105,46 +1121,51 @@ DoFTSRebuild() {
       fi
     done
 
-    # Check blobs database for FTS tables
+    # Check blobs database for FTS tables (if database exists)
     Output ""
     Output "Scanning for FTS4 tables in blobs database..."
 
-    FTSTablesBlobs="$("$PLEX_SQLITE" $CPPL.blobs.db "$FTS_TABLE_QUERY" 2>&1)"
-    Result=$?
-
-    if ! SQLiteOK $Result; then
-      Output "Error scanning blobs database for FTS tables. Error code $Result"
-      WriteLog "FTSRbld - Scan FTS tables (blobs) - FAIL ($Result)"
-      # Don't fail entirely if blobs scan fails - main DB may be OK
-    elif [ -z "$FTSTablesBlobs" ]; then
-      Output "No FTS4 tables found in blobs database."
-      WriteLog "FTSRbld - No FTS4 tables in blobs database"
+    if [ ! -f "$CPPL.blobs.db" ]; then
+      Output "Note: Blobs database not found. Skipping FTS rebuild for blobs."
+      WriteLog "FTSRbld - No blobs database"
     else
-      Output "Found FTS4 tables in blobs database:"
-      for Table in $FTSTablesBlobs
-      do
-        Output "  - $Table"
-      done
-      Output ""
+      FTSTablesBlobs="$("$PLEX_SQLITE" $CPPL.blobs.db "$FTS_TABLE_QUERY" 2>&1)"
+      Result=$?
 
-      Output "Rebuilding FTS4 indexes in blobs database..."
-      for Table in $FTSTablesBlobs
-      do
-        Output "  Rebuilding $Table..."
+      if ! SQLiteOK $Result; then
+        Output "Error scanning blobs database for FTS tables. Error code $Result"
+        WriteLog "FTSRbld - Scan FTS tables (blobs) - FAIL ($Result)"
+        # Don't fail entirely if blobs scan fails - main DB may be OK
+      elif [ -z "$FTSTablesBlobs" ]; then
+        Output "No FTS4 tables found in blobs database."
+        WriteLog "FTSRbld - No FTS4 tables in blobs database"
+      else
+        Output "Found FTS4 tables in blobs database:"
+        for Table in $FTSTablesBlobs
+        do
+          Output "  - $Table"
+        done
+        Output ""
 
-        "$PLEX_SQLITE" $CPPL.blobs.db "INSERT INTO $Table($Table) VALUES('rebuild');" 2>&1
-        Result=$?
-        [ $IgnoreErrors -eq 1 ] && Result=0
+        Output "Rebuilding FTS4 indexes in blobs database..."
+        for Table in $FTSTablesBlobs
+        do
+          Output "  Rebuilding $Table..."
 
-        if SQLiteOK $Result; then
-          Output "    $Table rebuilt successfully."
-          WriteLog "FTSRbld - Rebuild (blobs): $Table - PASS"
-        else
-          Output "    $Table rebuild failed. Error code $Result"
-          WriteLog "FTSRbld - Rebuild (blobs): $Table - FAIL ($Result)"
-          Fail=1
-        fi
-      done
+          "$PLEX_SQLITE" $CPPL.blobs.db "INSERT INTO $Table($Table) VALUES('rebuild');" 2>&1
+          Result=$?
+          [ $IgnoreErrors -eq 1 ] && Result=0
+
+          if SQLiteOK $Result; then
+            Output "    $Table rebuilt successfully."
+            WriteLog "FTSRbld - Rebuild (blobs): $Table - PASS"
+          else
+            Output "    $Table rebuild failed. Error code $Result"
+            WriteLog "FTSRbld - Rebuild (blobs): $Table - FAIL ($Result)"
+            Fail=1
+          fi
+        done
+      fi
     fi
 
     Output ""
