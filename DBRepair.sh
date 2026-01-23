@@ -169,11 +169,15 @@ CheckDatabases() {
   return $Damaged
 }
 
+# Global flag for FTS damage status (separate from main DB damage)
+FTSDamaged=0
+
 # Check FTS (Full-Text Search) index integrity
 CheckFTS() {
 
   # Arg1 = calling function name for logging
 
+  FTSDamaged=0
   local Caller="${1:-Check}"
   local FTSFail=0
 
@@ -245,6 +249,7 @@ CheckFTS() {
     Output "FTS integrity check complete. One or more FTS indexes are DAMAGED."
     Output "Use 'reindex' command (option 6) or 'automatic' (option 2) to rebuild."
     WriteLog "$Caller - FTS Check - FAIL"
+    FTSDamaged=1
   fi
 
   return $FTSFail
